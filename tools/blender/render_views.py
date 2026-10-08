@@ -64,6 +64,10 @@ def select_visible_objects(names, exclude=()):
     keep = {o for o in keep if not any(x in o.name.lower() for x in exclude)}
     for o in bpy.context.scene.objects:
         o.hide_render = o not in keep
+    for o in keep:
+        o.hide_viewport = False
+        o.visible_camera = True
+        o.is_holdout = False
     if not keep:
         sys.exit("No mesh objects selected.")
     if names:
@@ -80,6 +84,8 @@ def enable_layer_collections(lc, wanted, inside=False):
     if has_wanted:
         lc.exclude = False
         lc.hide_viewport = False
+        lc.holdout = False
+        lc.indirect_only = False
         lc.collection.hide_render = False
     return has_wanted
 
@@ -237,6 +243,20 @@ def aim_camera(cam, box_lo, box_hi, d, up, margin, size):
     }
 
 
+def image_stats(path):
+    """Return (% opaque pixels, mean RGB of opaque pixels) so a blank render is obvious."""
+    import numpy as np
+    img = bpy.data.images.load(path)
+    arr = np.empty(len(img.pixels), dtype=np.float32)
+    img.pixels.foreach_get(arr)
+    arr = arr.reshape(-1, 4)
+    opaque = arr[arr[:, 3] > 0.5]
+    bpy.data.images.remove(img)
+    if not len(opaque):
+        return 0.0, (0, 0, 0)
+    return 100.0 * len(opaque) / len(arr), tuple(float(v) for v in opaque[:, :3].mean(axis=0))
+
+
 def main():
     args = parse_args()
     if args.list_collections:
@@ -272,7 +292,8 @@ def main():
             bpy.ops.render.render(write_still=True)
             info.update({"region": region, "view": view, "label": label, "box": [list(lo), list(hi)]})
             manifest["images"][fname] = info
-            print("rendered", fname)
+            pct, rgb = image_stats(sc.render.filepath)
+            print("rendered %s  stats: %.1f%% opaque, mean RGB (%.2f, %.2f, %.2f)" % ((fname, pct) + rgb))
 
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
