@@ -354,9 +354,17 @@ def render_charts(args, views_cfg, objs, sc, cam, sun):
         sil[key] = {"width": W, "height": H, "rows": silhouette(sc.render.filepath, W, H, args.scale)}
         names.append(fname)
         cell = max(cell, max(W, H) * args.scale)
-    with open(os.path.join(args.out, "charts-manifest.json"), "w", encoding="utf-8") as fh:
+    man_path = os.path.join(args.out, "charts-manifest.json")
+    if os.path.exists(man_path):
+        with open(man_path, encoding="utf-8") as fh:
+            manifest = {**json.load(fh), **manifest}
+    with open(man_path, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
-    with open(os.path.join(args.out, "charts-silhouettes.json"), "w", encoding="utf-8") as fh:
+    sil_path = os.path.join(args.out, "charts-silhouettes.json")
+    if os.path.exists(sil_path):  # rendering a subset must not drop the other charts
+        with open(sil_path, encoding="utf-8") as fh:
+            sil = {**json.load(fh), **sil}
+    with open(sil_path, "w", encoding="utf-8") as fh:
         json.dump(sil, fh, separators=(",", ":"))
     if args.sheet:
         write_sheet(args.out, names, cell, cols=args.sheet_cols)
