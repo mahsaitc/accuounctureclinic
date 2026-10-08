@@ -67,6 +67,7 @@ def select_visible_objects(names, exclude=()):
         if missing:
             sys.exit("Collections not found: %s (use --list-collections)" % ", ".join(sorted(missing)))
     keep = {o for o in keep if not any(x in o.name.lower() for x in exclude)}
+    keep = {o for o in keep if len(o.data.polygons) > 0}  # edge-only helpers (label leader lines) render nothing
     for o in bpy.context.scene.objects:
         o.hide_render = o not in keep
     for o in keep:
@@ -340,7 +341,7 @@ def main():
                 print("FOUND:", o.name)
         return
     body_lo, body_hi = world_bbox(objs)
-    half = max(abs(body_lo.x), abs(body_hi.x))  # the model's midline is x = 0, so make the x range symmetric
+    half = cfg.get("x_half_width") or max(abs(body_lo.x), abs(body_hi.x))  # midline is x = 0: keep the x range symmetric
     body_lo.x, body_hi.x = -half, half
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
     print_extremes(objs)
