@@ -36,7 +36,7 @@ def parse_args():
                    help="workbench = fast, uses the GPU; cpu = Cycles on the CPU, slower but never touches the GPU")
     p.add_argument("--exclude", default="", help="comma-separated, case-insensitive substrings; objects whose name contains one are dropped (labels, helpers)")
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
-    p.add_argument("--glow", type=float, default=0.45, help="skin emission strength (cpu engine, flat style): keeps unlit inside surfaces from rendering black")
+    p.add_argument("--glow", type=float, default=0.8, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
@@ -169,8 +169,20 @@ def setup_cycles_cpu(sc, style, samples, outline, light, glow):
             bsdf.inputs["Base Color"].default_value = (0.86, 0.80, 0.74, 1)
             bsdf.inputs["Roughness"].default_value = 0.8
             if glow > 0:
-                bsdf.inputs["Emission Color"].default_value = (0.86, 0.80, 0.74, 1)
-                bsdf.inputs["Emission Strength"].default_value = glow
+                # Surfaces seen from inside (through gaps in the open body mesh) get a flat skin tone
+                # instead of rendering black. Front faces keep normal shading.
+                nt = mat.node_tree
+                out = nt.nodes.get("Material Output")
+                geo = nt.nodes.new("ShaderNodeNewGeometry")
+                emit = nt.nodes.new("ShaderNodeEmission")
+                emit.inputs["Color"].default_value = (0.86, 0.80, 0.74, 1)
+                emit.inputs["Strength"].default_value = glow
+                mix = nt.nodes.new("ShaderNodeMixShader")
+                nt.links.new(geo.outputs["Backfacing"], mix.inputs[0])
+                nt.links.new(bsdf.outputs["BSDF"], mix.inputs[1])
+                nt.links.new(emit.outputs["Emission"], mix.inputs[2])
+                if out:
+                    nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
         bpy.context.view_layer.material_override = mat
 
     if outline:
@@ -179,7 +191,7 @@ def setup_cycles_cpu(sc, style, samples, outline, light, glow):
         bpy.context.view_layer.freestyle_settings.linesets[0].linestyle.thickness = 1.5
 
 
-def setup_scene(style, engine, samples, outline, light=1.0, glow=0.45):
+def setup_scene(style, engine, samples, outline, light=1.0, glow=0.8):
     sc = bpy.context.scene
     # The Z-Anatomy scene ships with a compositor (white background + Freestyle lines) and a second
     # view layer for its "Take a picture" feature. Both would overwrite our output.
