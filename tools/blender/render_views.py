@@ -293,13 +293,30 @@ def image_stats(path):
     return 100.0 * len(opaque) / len(arr), tuple(float(v) for v in opaque[:, :3].mean(axis=0))
 
 
+def silhouette(path, w, h, k):
+    """Per chart-unit row: [left, right] extent of the opaque pixels in chart units, or None for an empty row."""
+    import numpy as np
+    img = bpy.data.images.load(path)
+    px_w, px_h = img.size
+    arr = np.empty(len(img.pixels), dtype=np.float32)
+    img.pixels.foreach_get(arr)
+    bpy.data.images.remove(img)
+    alpha = arr.reshape(px_h, px_w, 4)[..., 3] > 0.5  # row 0 is the bottom of the image
+    rows = []
+    for r in range(h):  # chart row r counted from the top
+        band = alpha[(h - 1 - r) * k:(h - r) * k]
+        cols = np.where(band.any(axis=0))[0]
+        rows.append([round(float(cols[0]) / k, 2), round(float(cols[-1] + 1) / k, 2)] if len(cols) else None)
+    return rows
+
+
 def render_charts(args, views_cfg, objs, sc, cam, sun):
     """Render every chart in charts.json: orthographic frame of W x H chart units at px_per_m, same aspect as the SVG chart."""
     with open(args.charts_file, encoding="utf-8") as fh:
         charts = json.load(fh)["charts"]
     wanted = {n.strip() for n in args.chart_names.split(",") if n.strip()}
     os.makedirs(args.out, exist_ok=True)
-    manifest, names, cell = {}, [], 1
+    manifest, names, cell, sil = {}, [], 1, {}
     for key, spec in charts.items():
         if wanted and key not in wanted:
             continue
@@ -334,10 +351,13 @@ def render_charts(args, views_cfg, objs, sc, cam, sun):
         print("chart %s: %d objects, %.1f%% opaque, mean RGB (%.2f, %.2f, %.2f)" % ((key, shown, pct) + rgb))
         manifest[fname] = {"view": spec["view"], "center": spec["center"], "px_per_m": s_m, "size": [W, H], "scale": args.scale,
                            "right_axis": list(r), "up_axis": list(u)}
+        sil[key] = {"width": W, "height": H, "rows": silhouette(sc.render.filepath, W, H, args.scale)}
         names.append(fname)
         cell = max(cell, max(W, H) * args.scale)
     with open(os.path.join(args.out, "charts-manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
+    with open(os.path.join(args.out, "charts-silhouettes.json"), "w", encoding="utf-8") as fh:
+        json.dump(sil, fh, separators=(",", ":"))
     if args.sheet:
         write_sheet(args.out, names, cell, cols=args.sheet_cols)
 
