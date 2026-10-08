@@ -94,6 +94,21 @@ def world_bbox(objs):
     return lo, hi
 
 
+def print_extremes(objs, n=4):
+    """Print the objects that stretch the bounding box, to spot stray helpers/labels."""
+    deps = bpy.context.evaluated_depsgraph_get()
+    rows = []
+    for o in objs:
+        ev = o.evaluated_get(deps)
+        pts = [ev.matrix_world @ Vector(c) for c in ev.bound_box]
+        rows.append((o.name, min(p.x for p in pts), max(p.x for p in pts), min(p.z for p in pts), max(p.z for p in pts)))
+    for label, idx, rev in (("lowest x (subject's right)", 1, False), ("highest x (subject's left)", 2, True),
+                            ("lowest z", 3, False), ("highest z", 4, True)):
+        print("Extremes -", label)
+        for r in sorted(rows, key=lambda r: r[idx], reverse=rev)[:n]:
+            print("   %-40s x[%.3f, %.3f] z[%.3f, %.3f]" % r)
+
+
 def region_box(body_lo, body_hi, frac):
     size = body_hi - body_lo
     lo = Vector((body_lo[i] + frac[2 * i] * size[i] for i in range(3)))
@@ -153,6 +168,7 @@ def setup_cycles_cpu(sc, style, samples, outline):
 def setup_scene(style, engine, samples, outline):
     sc = bpy.context.scene
     sc.render.film_transparent = True
+    sc.render.use_freestyle = bool(outline and engine == "cpu")  # the Z-Anatomy scene ships with it enabled
     sc.render.image_settings.file_format = "PNG"
     sc.render.image_settings.color_mode = "RGBA"
     sc.view_settings.view_transform = "Standard"
@@ -230,6 +246,7 @@ def main():
     objs = select_visible_objects(names)
     body_lo, body_hi = world_bbox(objs)
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
+    print_extremes(objs)
 
     sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline)
     os.makedirs(args.out, exist_ok=True)
