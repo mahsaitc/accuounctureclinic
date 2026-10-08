@@ -43,6 +43,7 @@ def parse_args():
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
+    p.add_argument("--dump-bboxes", action="store_true", help="print 'BBOX name x0 x1 y0 y1 z0 z1' (metres) for every selected object and exit")
     p.add_argument("--find", default="", help="comma-separated substrings; print matching object names in the chosen collections and exit")
     return p.parse_args(argv)
 
@@ -334,6 +335,11 @@ def main():
     if args.engine == "cpu" and not args.shadows:
         for o in objs:
             o.visible_shadow = False
+    if args.dump_bboxes:
+        for o in sorted(objs, key=lambda o: o.name):
+            lo, hi = world_bbox([o])
+            print("BBOX|%s|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f" % (o.name, lo.x, hi.x, lo.y, hi.y, lo.z, hi.z))
+        return
     if args.find:
         needles = [x.strip().lower() for x in args.find.split(",") if x.strip()]
         for o in sorted(objs, key=lambda o: o.name):
