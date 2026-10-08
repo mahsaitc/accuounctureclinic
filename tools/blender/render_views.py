@@ -334,6 +334,8 @@ def main():
                 print("FOUND:", o.name)
         return
     body_lo, body_hi = world_bbox(objs)
+    half = max(abs(body_lo.x), abs(body_hi.x))  # the model's midline is x = 0, so make the x range symmetric
+    body_lo.x, body_hi.x = -half, half
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
     print_extremes(objs)
 
