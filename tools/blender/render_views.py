@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument("--chart-names", default="", help="comma-separated chart keys to render (default: all)")
     p.add_argument("--scale", type=int, default=3, help="pixels per chart unit for --charts (1 = same size as the old SVG charts)")
     p.add_argument("--sheet-cols", type=int, default=7)
+    p.add_argument("--silhouettes-only", action="store_true", help="with --charts: rebuild charts-silhouettes.json from the PNGs already in --out, without rendering (use the same --scale)")
     p.add_argument("--sheet-only", action="store_true", help="do not render; build <out>/sheet.png from the images already in <out> (uses <out>/manifest.json)")
     p.add_argument("--sheet", action="store_true", help="also write <out>/sheet.png, all rendered views tiled on one grey page for quick review")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
@@ -294,7 +295,7 @@ def image_stats(path):
 
 
 def silhouette(path, w, h, k):
-    """Per chart-unit row: [left, right] extent of the opaque pixels in chart units, or None for an empty row."""
+    """Per chart-unit row: the runs [x0, x1] (chart units) of opaque pixels; [] for an empty row. Runs closer than 1 unit merge."""
     import numpy as np
     img = bpy.data.images.load(path)
     px_w, px_h = img.size
@@ -304,10 +305,34 @@ def silhouette(path, w, h, k):
     alpha = arr.reshape(px_h, px_w, 4)[..., 3] > 0.5  # row 0 is the bottom of the image
     rows = []
     for r in range(h):  # chart row r counted from the top
-        band = alpha[(h - 1 - r) * k:(h - r) * k]
-        cols = np.where(band.any(axis=0))[0]
-        rows.append([round(float(cols[0]) / k, 2), round(float(cols[-1] + 1) / k, 2)] if len(cols) else None)
+        band = alpha[(h - 1 - r) * k:(h - r) * k].any(axis=0)
+        cols = np.flatnonzero(band)
+        runs = []
+        if len(cols):
+            start = prev = cols[0]
+            for c in cols[1:]:
+                if c - prev > k:  # a gap of more than one chart unit starts a new run
+                    runs.append([round(float(start) / k, 2), round(float(prev + 1) / k, 2)])
+                    start = c
+                prev = c
+            runs.append([round(float(start) / k, 2), round(float(prev + 1) / k, 2)])
+        rows.append(runs)
     return rows
+
+
+def write_silhouettes_only(args):
+    """Rebuild charts-silhouettes.json from the PNGs already in --out (no rendering)."""
+    with open(args.charts_file, encoding="utf-8") as fh:
+        charts = json.load(fh)["charts"]
+    sil = {}
+    for key, spec in charts.items():
+        path = os.path.abspath(os.path.join(args.out, key + ".png"))
+        if os.path.exists(path):
+            w, h = spec["size"]
+            sil[key] = {"width": w, "height": h, "rows": silhouette(path, w, h, args.scale)}
+            print("silhouette", key)
+    with open(os.path.join(args.out, "charts-silhouettes.json"), "w", encoding="utf-8") as fh:
+        json.dump(sil, fh, separators=(",", ":"))
 
 
 def render_charts(args, views_cfg, objs, sc, cam, sun):
@@ -402,6 +427,9 @@ def write_sheet(out_dir, names, cell, cols=7):
 
 def main():
     args = parse_args()
+    if args.silhouettes_only:
+        write_silhouettes_only(args)
+        return
     if args.sheet_only:
         with open(os.path.join(args.out, "manifest.json"), encoding="utf-8") as fh:
             write_sheet(args.out, list(json.load(fh)["images"]), args.size)
