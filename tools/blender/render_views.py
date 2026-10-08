@@ -34,6 +34,8 @@ def parse_args():
     p.add_argument("--style", choices=["flat", "color"], default="flat")
     p.add_argument("--engine", choices=["workbench", "cpu"], default="workbench",
                    help="workbench = fast, uses the GPU; cpu = Cycles on the CPU, slower but never touches the GPU")
+    p.add_argument("--exclude", default="", help="comma-separated, case-insensitive substrings; objects whose name contains one are dropped (labels, helpers)")
+    p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
@@ -46,7 +48,7 @@ def all_children(coll):
         yield from all_children(c)
 
 
-def select_visible_objects(names):
+def select_visible_objects(names, exclude=()):
     """Hide from render everything outside the named collections. Returns renderable mesh objects."""
     if not names:
         keep = {o for o in bpy.context.scene.objects if o.type == "MESH" and not o.hide_render}
@@ -59,6 +61,7 @@ def select_visible_objects(names):
         missing = wanted - {c.name for c in all_children(bpy.context.scene.collection)}
         if missing:
             sys.exit("Collections not found: %s (use --list-collections)" % ", ".join(sorted(missing)))
+    keep = {o for o in keep if not any(x in o.name.lower() for x in exclude)}
     for o in bpy.context.scene.objects:
         o.hide_render = o not in keep
     if not keep:
@@ -130,7 +133,7 @@ def setup_workbench(sc, style):
         sh.color_type = "OBJECT"
 
 
-def setup_cycles_cpu(sc, style, samples, outline):
+def setup_cycles_cpu(sc, style, samples, outline, light):
     sc.render.engine = "CYCLES"
     sc.cycles.device = "CPU"
     sc.cycles.samples = samples
@@ -145,7 +148,7 @@ def setup_cycles_cpu(sc, style, samples, outline):
     bg = world.node_tree.nodes.get("Background") if world.node_tree else None
     if bg:
         bg.inputs["Color"].default_value = (1, 1, 1, 1)
-        bg.inputs["Strength"].default_value = 0.9
+        bg.inputs["Strength"].default_value = 0.5 * light
 
     if style == "flat":
         mat = bpy.data.materials.new("FlatSkin")
@@ -165,7 +168,7 @@ def setup_cycles_cpu(sc, style, samples, outline):
         bpy.context.view_layer.freestyle_settings.linesets[0].linestyle.thickness = 1.5
 
 
-def setup_scene(style, engine, samples, outline):
+def setup_scene(style, engine, samples, outline, light=1.0):
     sc = bpy.context.scene
     sc.render.film_transparent = True
     sc.render.use_freestyle = bool(outline and engine == "cpu")  # the Z-Anatomy scene ships with it enabled
@@ -173,7 +176,7 @@ def setup_scene(style, engine, samples, outline):
     sc.render.image_settings.color_mode = "RGBA"
     sc.view_settings.view_transform = "Standard"
     if engine == "cpu":
-        setup_cycles_cpu(sc, style, samples, outline)
+        setup_cycles_cpu(sc, style, samples, outline, light)
     else:
         setup_workbench(sc, style)
 
@@ -186,7 +189,7 @@ def setup_scene(style, engine, samples, outline):
     sun = None
     if engine == "cpu":
         sun = bpy.data.objects.new("ViewSun", bpy.data.lights.new("ViewSun", "SUN"))
-        sun.data.energy = 2.5
+        sun.data.energy = 1.5 * light
         sc.collection.objects.link(sun)
     return sc, cam, sun
 
@@ -243,12 +246,13 @@ def main():
 
     cfg = json.load(open(args.views, encoding="utf-8"))
     names = [n.strip() for n in args.collections.split(",") if n.strip()]
-    objs = select_visible_objects(names)
+    exclude = [x.strip().lower() for x in args.exclude.split(",") if x.strip()]
+    objs = select_visible_objects(names, exclude)
     body_lo, body_hi = world_bbox(objs)
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
     print_extremes(objs)
 
-    sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline)
+    sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline, args.light)
     os.makedirs(args.out, exist_ok=True)
     wanted = {r.strip() for r in args.regions.split(",") if r.strip()}
     manifest = {"body_bbox": [list(body_lo), list(body_hi)], "images": {}}
