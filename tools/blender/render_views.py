@@ -36,7 +36,8 @@ def parse_args():
                    help="workbench = fast, uses the GPU; cpu = Cycles on the CPU, slower but never touches the GPU")
     p.add_argument("--exclude", default="", help="comma-separated, case-insensitive substrings; objects whose name contains one are dropped (labels, helpers)")
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
-    p.add_argument("--glow", type=float, default=0.8, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
+    p.add_argument("--glow", type=float, default=0.0, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
+    p.add_argument("--shadows", action="store_true", help="keep object shadows (cpu engine). Off by default: the body mesh is open, and shadows turn the inside seen through gaps (groin, eye sockets) black")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
@@ -191,7 +192,7 @@ def setup_cycles_cpu(sc, style, samples, outline, light, glow):
         bpy.context.view_layer.freestyle_settings.linesets[0].linestyle.thickness = 1.5
 
 
-def setup_scene(style, engine, samples, outline, light=1.0, glow=0.8):
+def setup_scene(style, engine, samples, outline, light=1.0, glow=0.0):
     sc = bpy.context.scene
     # The Z-Anatomy scene ships with a compositor (white background + Freestyle lines) and a second
     # view layer for its "Take a picture" feature. Both would overwrite our output.
@@ -293,6 +294,9 @@ def main():
     names = [n.strip() for n in args.collections.split(",") if n.strip()]
     exclude = [x.strip().lower() for x in args.exclude.split(",") if x.strip()]
     objs = select_visible_objects(names, exclude)
+    if args.engine == "cpu" and not args.shadows:
+        for o in objs:
+            o.visible_shadow = False
     if args.find:
         needles = [x.strip().lower() for x in args.find.split(",") if x.strip()]
         for o in sorted(objs, key=lambda o: o.name):
