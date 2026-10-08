@@ -38,6 +38,7 @@ def parse_args():
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
     p.add_argument("--glow", type=float, default=0.0, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
     p.add_argument("--shadows", action="store_true", help="keep object shadows (cpu engine). Off by default: the body mesh is open, and shadows turn the inside seen through gaps (groin, eye sockets) black")
+    p.add_argument("--sheet-only", action="store_true", help="do not render; build <out>/sheet.png from the images already in <out> (uses <out>/manifest.json)")
     p.add_argument("--sheet", action="store_true", help="also write <out>/sheet.png, all rendered views tiled on one grey page for quick review")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
@@ -287,6 +288,7 @@ def image_stats(path):
 def write_sheet(out_dir, names, cell, cols=7):
     """Tile the rendered PNGs on a grey page (in the order of `names`) and save <out_dir>/sheet.png."""
     import numpy as np
+    out_dir = os.path.abspath(out_dir)
     rows = -(-len(names) // cols)
     sheet = np.full((rows * cell, cols * cell, 4), 0.55, dtype=np.float32)
     sheet[..., 3] = 1.0
@@ -315,6 +317,10 @@ def write_sheet(out_dir, names, cell, cols=7):
 
 def main():
     args = parse_args()
+    if args.sheet_only:
+        with open(os.path.join(args.out, "manifest.json"), encoding="utf-8") as fh:
+            write_sheet(args.out, list(json.load(fh)["images"]), args.size)
+        return
     if args.list_collections:
         for c in all_children(bpy.context.scene.collection):
             print(c.name, len(c.objects))
