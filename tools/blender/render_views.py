@@ -36,6 +36,7 @@ def parse_args():
                    help="workbench = fast, uses the GPU; cpu = Cycles on the CPU, slower but never touches the GPU")
     p.add_argument("--exclude", default="", help="comma-separated, case-insensitive substrings; objects whose name contains one are dropped (labels, helpers)")
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
+    p.add_argument("--glow", type=float, default=0.45, help="skin emission strength (cpu engine, flat style): keeps unlit inside surfaces from rendering black")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
@@ -140,7 +141,7 @@ def setup_workbench(sc, style):
         sh.color_type = "OBJECT"
 
 
-def setup_cycles_cpu(sc, style, samples, outline, light):
+def setup_cycles_cpu(sc, style, samples, outline, light, glow):
     sc.render.engine = "CYCLES"
     sc.cycles.device = "CPU"
     sc.cycles.samples = samples
@@ -167,6 +168,9 @@ def setup_cycles_cpu(sc, style, samples, outline, light):
         if bsdf:
             bsdf.inputs["Base Color"].default_value = (0.86, 0.80, 0.74, 1)
             bsdf.inputs["Roughness"].default_value = 0.8
+            if glow > 0:
+                bsdf.inputs["Emission Color"].default_value = (0.86, 0.80, 0.74, 1)
+                bsdf.inputs["Emission Strength"].default_value = glow
         bpy.context.view_layer.material_override = mat
 
     if outline:
@@ -175,7 +179,7 @@ def setup_cycles_cpu(sc, style, samples, outline, light):
         bpy.context.view_layer.freestyle_settings.linesets[0].linestyle.thickness = 1.5
 
 
-def setup_scene(style, engine, samples, outline, light=1.0):
+def setup_scene(style, engine, samples, outline, light=1.0, glow=0.45):
     sc = bpy.context.scene
     # The Z-Anatomy scene ships with a compositor (white background + Freestyle lines) and a second
     # view layer for its "Take a picture" feature. Both would overwrite our output.
@@ -191,7 +195,7 @@ def setup_scene(style, engine, samples, outline, light=1.0):
     sc.render.image_settings.color_mode = "RGBA"
     sc.view_settings.view_transform = "Standard"
     if engine == "cpu":
-        setup_cycles_cpu(sc, style, samples, outline, light)
+        setup_cycles_cpu(sc, style, samples, outline, light, glow)
     else:
         setup_workbench(sc, style)
 
@@ -287,7 +291,7 @@ def main():
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
     print_extremes(objs)
 
-    sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline, args.light)
+    sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline, args.light, args.glow)
     os.makedirs(args.out, exist_ok=True)
     wanted = {r.strip() for r in args.regions.split(",") if r.strip()}
     manifest = {"body_bbox": [list(body_lo), list(body_hi)], "images": {}}
