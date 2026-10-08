@@ -353,8 +353,9 @@ def main():
     for region, spec in cfg["regions"].items():
         if wanted and region not in wanted:
             continue
-        lo, hi = region_box(body_lo, body_hi, spec["box"])
         for view in spec["views"]:
+            # a view may override the region box (e.g. a tighter x range for side views of the torso)
+            lo, hi = region_box(body_lo, body_hi, spec.get("view_boxes", {}).get(view, spec["box"]))
             dv = cfg["directions"][view]
             info = aim_camera(cam, lo, hi, dv["dir"], dv["up"], args.margin, args.size)
             if sun is not None:  # key light: from the camera, slightly above and to the side
