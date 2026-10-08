@@ -176,6 +176,14 @@ def setup_cycles_cpu(sc, style, samples, outline, light):
 
 def setup_scene(style, engine, samples, outline, light=1.0):
     sc = bpy.context.scene
+    # The Z-Anatomy scene ships with a compositor (white background + Freestyle lines) and a second
+    # view layer for its "Take a picture" feature. Both would overwrite our output.
+    sc.render.use_compositing = False
+    sc.render.use_sequencer = False
+    active = bpy.context.view_layer
+    for vl in sc.view_layers:
+        vl.use = vl == active
+    print("View layers:", [(vl.name, vl.use) for vl in sc.view_layers], "-> rendering", active.name)
     sc.render.film_transparent = True
     sc.render.use_freestyle = bool(outline and engine == "cpu")  # the Z-Anatomy scene ships with it enabled
     sc.render.image_settings.file_format = "PNG"
