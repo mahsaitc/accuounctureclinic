@@ -38,6 +38,7 @@ def parse_args():
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
     p.add_argument("--glow", type=float, default=0.0, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
     p.add_argument("--shadows", action="store_true", help="keep object shadows (cpu engine). Off by default: the body mesh is open, and shadows turn the inside seen through gaps (groin, eye sockets) black")
+    p.add_argument("--sheet", action="store_true", help="also write <out>/sheet.png, all rendered views tiled on one grey page for quick review")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
@@ -283,6 +284,35 @@ def image_stats(path):
     return 100.0 * len(opaque) / len(arr), tuple(float(v) for v in opaque[:, :3].mean(axis=0))
 
 
+def write_sheet(out_dir, names, cell, cols=7):
+    """Tile the rendered PNGs on a grey page (in the order of `names`) and save <out_dir>/sheet.png."""
+    import numpy as np
+    rows = -(-len(names) // cols)
+    sheet = np.full((rows * cell, cols * cell, 4), 0.55, dtype=np.float32)
+    sheet[..., 3] = 1.0
+    for i, name in enumerate(names):
+        img = bpy.data.images.load(os.path.join(out_dir, name))
+        w, h = img.size
+        arr = np.empty(len(img.pixels), dtype=np.float32)
+        img.pixels.foreach_get(arr)
+        arr = arr.reshape(h, w, 4)
+        bpy.data.images.remove(img)
+        h, w = min(h, cell), min(w, cell)
+        arr = arr[:h, :w]
+        y0 = (rows - 1 - i // cols) * cell + (cell - h) // 2
+        x0 = (i % cols) * cell + (cell - w) // 2
+        a = arr[..., 3:4]
+        sheet[y0:y0 + h, x0:x0 + w, :3] = arr[..., :3] * a + sheet[y0:y0 + h, x0:x0 + w, :3] * (1 - a)
+    out = bpy.data.images.new("sheet", cols * cell, rows * cell, alpha=False)
+    out.pixels.foreach_set(sheet.ravel())
+    out.filepath_raw = os.path.join(out_dir, "sheet.png")
+    out.file_format = "PNG"
+    out.save()
+    print("Sheet order (left to right, top to bottom, %d per row):" % cols)
+    for i, n in enumerate(names):
+        print("  %2d  %s" % (i + 1, n))
+
+
 def main():
     args = parse_args()
     if args.list_collections:
@@ -332,6 +362,8 @@ def main():
 
     with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
+    if args.sheet:
+        write_sheet(args.out, list(manifest["images"]), args.size)
 
 
 main()
