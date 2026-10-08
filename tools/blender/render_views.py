@@ -39,6 +39,7 @@ def parse_args():
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
     p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
+    p.add_argument("--find", default="", help="comma-separated substrings; print matching object names in the chosen collections and exit")
     return p.parse_args(argv)
 
 
@@ -276,6 +277,12 @@ def main():
     names = [n.strip() for n in args.collections.split(",") if n.strip()]
     exclude = [x.strip().lower() for x in args.exclude.split(",") if x.strip()]
     objs = select_visible_objects(names, exclude)
+    if args.find:
+        needles = [x.strip().lower() for x in args.find.split(",") if x.strip()]
+        for o in sorted(objs, key=lambda o: o.name):
+            if any(n in o.name.lower() for n in needles):
+                print("FOUND:", o.name)
+        return
     body_lo, body_hi = world_bbox(objs)
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
     print_extremes(objs)
