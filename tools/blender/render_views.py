@@ -32,6 +32,10 @@ def parse_args():
     p.add_argument("--size", type=int, default=2000, help="pixels on the longest side")
     p.add_argument("--margin", type=float, default=1.06, help="padding factor around the region")
     p.add_argument("--style", choices=["flat", "color"], default="flat")
+    p.add_argument("--engine", choices=["workbench", "cpu"], default="workbench",
+                   help="workbench = fast, uses the GPU; cpu = Cycles on the CPU, slower but never touches the GPU")
+    p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
+    p.add_argument("--outline", action="store_true", help="Freestyle line art (cpu engine only; slow and memory hungry)")
     p.add_argument("--list-collections", action="store_true")
     return p.parse_args(argv)
 
@@ -59,7 +63,22 @@ def select_visible_objects(names):
         o.hide_render = o not in keep
     if not keep:
         sys.exit("No mesh objects selected.")
+    if names:
+        enable_layer_collections(bpy.context.view_layer.layer_collection, set(names))
     return keep
+
+
+def enable_layer_collections(lc, wanted, inside=False):
+    """Un-exclude / un-hide the wanted collections and their parents so they actually render."""
+    inside = inside or lc.name in wanted
+    has_wanted = inside
+    for child in lc.children:
+        has_wanted = enable_layer_collections(child, wanted, inside) or has_wanted
+    if has_wanted:
+        lc.exclude = False
+        lc.hide_viewport = False
+        lc.collection.hide_render = False
+    return has_wanted
 
 
 def world_bbox(objs):
@@ -82,12 +101,8 @@ def region_box(body_lo, body_hi, frac):
     return lo, hi
 
 
-def setup_scene(style):
-    sc = bpy.context.scene
+def setup_workbench(sc, style):
     sc.render.engine = "BLENDER_WORKBENCH"
-    sc.render.film_transparent = True
-    sc.render.image_settings.file_format = "PNG"
-    sc.render.image_settings.color_mode = "RGBA"
     sc.display.render_aa = "8"
     sh = sc.display.shading
     sh.light = "STUDIO"
@@ -98,14 +113,66 @@ def setup_scene(style):
         sh.single_color = (0.86, 0.80, 0.74)
     else:
         sh.color_type = "OBJECT"
+
+
+def setup_cycles_cpu(sc, style, samples, outline):
+    sc.render.engine = "CYCLES"
+    sc.cycles.device = "CPU"
+    sc.cycles.samples = samples
+    sc.cycles.use_denoising = False
+
+    world = bpy.data.worlds.new("ViewWorld")
+    sc.world = world
+    try:
+        world.use_nodes = True  # deprecated (always on) in newer Blender
+    except Exception:
+        pass
+    bg = world.node_tree.nodes.get("Background") if world.node_tree else None
+    if bg:
+        bg.inputs["Color"].default_value = (1, 1, 1, 1)
+        bg.inputs["Strength"].default_value = 0.9
+
+    if style == "flat":
+        mat = bpy.data.materials.new("FlatSkin")
+        try:
+            mat.use_nodes = True
+        except Exception:
+            pass
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf:
+            bsdf.inputs["Base Color"].default_value = (0.86, 0.80, 0.74, 1)
+            bsdf.inputs["Roughness"].default_value = 0.8
+        bpy.context.view_layer.material_override = mat
+
+    if outline:
+        sc.render.use_freestyle = True
+        bpy.context.view_layer.use_freestyle = True
+        bpy.context.view_layer.freestyle_settings.linesets[0].linestyle.thickness = 1.5
+
+
+def setup_scene(style, engine, samples, outline):
+    sc = bpy.context.scene
+    sc.render.film_transparent = True
+    sc.render.image_settings.file_format = "PNG"
+    sc.render.image_settings.color_mode = "RGBA"
     sc.view_settings.view_transform = "Standard"
+    if engine == "cpu":
+        setup_cycles_cpu(sc, style, samples, outline)
+    else:
+        setup_workbench(sc, style)
 
     cam_data = bpy.data.cameras.new("ViewCam")
     cam_data.type = "ORTHO"
     cam = bpy.data.objects.new("ViewCam", cam_data)
     sc.collection.objects.link(cam)
     sc.camera = cam
-    return sc, cam
+
+    sun = None
+    if engine == "cpu":
+        sun = bpy.data.objects.new("ViewSun", bpy.data.lights.new("ViewSun", "SUN"))
+        sun.data.energy = 2.5
+        sc.collection.objects.link(sun)
+    return sc, cam, sun
 
 
 def aim_camera(cam, box_lo, box_hi, d, up, margin, size):
@@ -164,7 +231,7 @@ def main():
     body_lo, body_hi = world_bbox(objs)
     print("Body bbox:", tuple(body_lo), tuple(body_hi))
 
-    sc, cam = setup_scene(args.style)
+    sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline)
     os.makedirs(args.out, exist_ok=True)
     wanted = {r.strip() for r in args.regions.split(",") if r.strip()}
     manifest = {"body_bbox": [list(body_lo), list(body_hi)], "images": {}}
@@ -176,6 +243,8 @@ def main():
         for view in spec["views"]:
             dv = cfg["directions"][view]
             info = aim_camera(cam, lo, hi, dv["dir"], dv["up"], args.margin, args.size)
+            if sun is not None:  # key light: from the camera, slightly above and to the side
+                sun.matrix_world = cam.matrix_world @ Matrix.Rotation(math.radians(25), 4, "X") @ Matrix.Rotation(math.radians(20), 4, "Y")
             label = spec.get("aliases", {}).get(view, view)
             fname = "%s_%s.png" % (region, label)
             sc.render.filepath = os.path.abspath(os.path.join(args.out, fname))

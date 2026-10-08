@@ -21,6 +21,13 @@ blender -b Z-Anatomy.blend --python tools/blender/render_views.py -- \
 ```
 خروجی: `build/test/head_front.png`، `right_hand_palmar.png`، … و `manifest.json`.
 
+### رندر با CPU (برای کارت گرافیک ضعیف یا Intel)
+اگر هنگام کار با Blender ویندوز با خطای `VIDEO_TDR_FAILURE` ریست می‌شود، رندر را با CPU انجام دهید. کندتر است، ولی GPU را درگیر نمی‌کند:
+```bash
+blender -b Z-Anatomy.blend --python tools/blender/render_views.py -- --engine cpu --samples 24 --out build/test --collections "9: Regions of human body" --regions body --size 1000
+```
+با `--samples` کیفیت را بالا و پایین ببرید. `--outline` خط دور تصویر (Freestyle) اضافه می‌کند ولی کند و پرمصرف است.
+
 ## ۴. تنظیم جهت‌ها و جعبه‌های ناحیه‌ها
 اسکریپت فرض می‌کند:
 - جلوی بدن به سمت **‑Y** است،
