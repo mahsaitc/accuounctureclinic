@@ -14,6 +14,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 
 import bpy
@@ -38,6 +39,11 @@ def parse_args():
     p.add_argument("--light", type=float, default=1.0, help="lighting multiplier for the cpu engine (lower if the render looks washed out)")
     p.add_argument("--glow", type=float, default=0.0, help="brightness of the flat skin tone used for surfaces seen from inside the mesh (cpu engine, flat style); 0 disables")
     p.add_argument("--shadows", action="store_true", help="keep object shadows (cpu engine). Off by default: the body mesh is open, and shadows turn the inside seen through gaps (groin, eye sockets) black")
+    p.add_argument("--charts", action="store_true", help="render the website's point-chart backgrounds from charts.json (exact frames) instead of the free regions")
+    p.add_argument("--charts-file", default=os.path.join(HERE, "charts.json"))
+    p.add_argument("--chart-names", default="", help="comma-separated chart keys to render (default: all)")
+    p.add_argument("--scale", type=int, default=3, help="pixels per chart unit for --charts (1 = same size as the old SVG charts)")
+    p.add_argument("--sheet-cols", type=int, default=7)
     p.add_argument("--sheet-only", action="store_true", help="do not render; build <out>/sheet.png from the images already in <out> (uses <out>/manifest.json)")
     p.add_argument("--sheet", action="store_true", help="also write <out>/sheet.png, all rendered views tiled on one grey page for quick review")
     p.add_argument("--samples", type=int, default=24, help="Cycles samples (cpu engine only)")
@@ -287,6 +293,55 @@ def image_stats(path):
     return 100.0 * len(opaque) / len(arr), tuple(float(v) for v in opaque[:, :3].mean(axis=0))
 
 
+def render_charts(args, views_cfg, objs, sc, cam, sun):
+    """Render every chart in charts.json: orthographic frame of W x H chart units at px_per_m, same aspect as the SVG chart."""
+    with open(args.charts_file, encoding="utf-8") as fh:
+        charts = json.load(fh)["charts"]
+    wanted = {n.strip() for n in args.chart_names.split(",") if n.strip()}
+    os.makedirs(args.out, exist_ok=True)
+    manifest, names, cell = {}, [], 1
+    for key, spec in charts.items():
+        if wanted and key not in wanted:
+            continue
+        inc = re.compile(spec["include"], re.I) if spec.get("include") else None
+        exc = re.compile(spec["exclude"], re.I) if spec.get("exclude") else None
+        shown = 0
+        for o in objs:
+            show = (inc is None or inc.search(o.name)) and not (exc and exc.search(o.name))
+            o.hide_render = not show
+            shown += bool(show)
+        W, H = spec["size"]
+        s_m = spec["px_per_m"]
+        dv = views_cfg["directions"][spec["view"]]
+        f = Vector(dv["dir"]).normalized()
+        r = f.cross(Vector(dv["up"]).normalized()).normalized()
+        u = r.cross(f).normalized()
+        center = Vector(spec["center"])
+        cam.location = center - f * 5.0
+        cam.matrix_world = Matrix.Translation(cam.location) @ Matrix(
+            ((r.x, u.x, -f.x, 0), (r.y, u.y, -f.y, 0), (r.z, u.z, -f.z, 0), (0, 0, 0, 1))
+        )
+        cam.data.clip_start, cam.data.clip_end = 0.01, 20.0
+        cam.data.ortho_scale = max(W, H) / s_m  # applies to the longer side; the other side follows the aspect
+        sc.render.resolution_x, sc.render.resolution_y = W * args.scale, H * args.scale
+        sc.render.resolution_percentage = 100
+        if sun is not None:
+            sun.matrix_world = cam.matrix_world @ Matrix.Rotation(math.radians(25), 4, "X") @ Matrix.Rotation(math.radians(20), 4, "Y")
+        fname = key + ".png"
+        sc.render.filepath = os.path.abspath(os.path.join(args.out, fname))
+        bpy.ops.render.render(write_still=True)
+        pct, rgb = image_stats(sc.render.filepath)
+        print("chart %s: %d objects, %.1f%% opaque, mean RGB (%.2f, %.2f, %.2f)" % ((key, shown, pct) + rgb))
+        manifest[fname] = {"view": spec["view"], "center": spec["center"], "px_per_m": s_m, "size": [W, H], "scale": args.scale,
+                           "right_axis": list(r), "up_axis": list(u)}
+        names.append(fname)
+        cell = max(cell, max(W, H) * args.scale)
+    with open(os.path.join(args.out, "charts-manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    if args.sheet:
+        write_sheet(args.out, names, cell, cols=args.sheet_cols)
+
+
 def write_sheet(out_dir, names, cell, cols=7):
     """Tile the rendered PNGs on a grey page (in the order of `names`) and save <out_dir>/sheet.png."""
     import numpy as np
@@ -353,6 +408,9 @@ def main():
     print_extremes(objs)
 
     sc, cam, sun = setup_scene(args.style, args.engine, args.samples, args.outline, args.light, args.glow)
+    if args.charts:
+        render_charts(args, cfg, objs, sc, cam, sun)
+        return
     os.makedirs(args.out, exist_ok=True)
     wanted = {r.strip() for r in args.regions.split(",") if r.strip()}
     manifest = {"body_bbox": [list(body_lo), list(body_hi)], "images": {}}
